@@ -7,6 +7,7 @@ from io import BytesIO
 from nonebot import get_bot
 from dynrender_skia.Core import DynRender
 from nonebot.adapters.onebot.v11 import MessageSegment,Bot
+from nonebot_plugin_alconna.uniseg import UniMessage
 from arielbot.plugins.Core.ariel_database import DataManager
 from arielbot.plugins.Core.ariel_bili import Dynamic,Live
 
@@ -92,7 +93,7 @@ class DynPusher(PublicPusher):
         img = skia.Image.fromarray(img, colorType=skia.ColorType.kRGBA_8888_ColorType)
         img_buffer = BytesIO()
         img.save(img_buffer)
-        return MessageSegment.image(img_buffer)        
+        return UniMessage.image(raw=img_buffer.getvalue())
 
     @staticmethod
     async def search_dyn_img_by_id(message_id):
@@ -109,9 +110,9 @@ class DynPusher(PublicPusher):
         else:
             dynamic = pickle.loads(dynamic[0])
         if dynamic.major.type == "MAJOR_TYPE_OPUS":
-            message = None
+            message = UniMessage()
             for pic in dynamic.major.opus.pics:
-                message += MessageSegment.image(pic.url)
+                message += UniMessage.image(url=pic.url)
             return message
         else:
             return "此动态没有图片"
@@ -149,8 +150,7 @@ class LivePusher(PublicPusher):
                 all_push_target = await m.select_live_push(v["uid"])
             if not all_push_target:
                 continue
-            logger.info(f"{v["live_status"]},{all_live_stauts[k]}")
-            message = MessageSegment.text(f"【{v["uname"]}】开播啦!!!\n\n标题：{v["title"]}\n\n")+MessageSegment.text(f"传送门：https://live.bilibili.com/{v["room_id"]}\n")+MessageSegment.image(v["cover_from_user"])
+            message = MessageSegment.text(f"【{v["uname"]}】开播啦!!!\n\n标题：{v["title"]}\n\n")+MessageSegment.text(f"传送门：https://live.bilibili.com/{v["room_id"]}")+MessageSegment.image(v["cover_from_user"])
             tasks.append({"target":all_push_target,"message":message})
         if tasks:
             await asyncio.gather(*[self.assign_tasks(i) for i in tasks])

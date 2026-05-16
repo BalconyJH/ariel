@@ -122,8 +122,3 @@ JNrRuoEUXpabUzGB8QIDAQAB
                 "expires": morsel.get("expires", None)
             })
         return parsed
-
-
-if __name__ == "__main__":
-    manager = CookieManager()
-    

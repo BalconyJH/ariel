@@ -1,11 +1,16 @@
+from nonebot_plugin_uninfo import Uninfo
+
 from arielbot.plugins.Core.ariel_database import DataManager
-from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 
-async def bot_is_active(event:GroupMessageEvent) -> bool:
+async def bot_is_active(session: Uninfo) -> bool:
+    if session.scene.id is None:
+        return False
+    self_id = int(session.self_id)
+    group_id = int(session.scene.id)
     async with DataManager() as m:
-        result = await m.select_bot_status((event.self_id,event.group_id))
+        result = await m.select_bot_status((self_id, group_id))
         if not result:
-            await m.insert_bot_status((event.self_id,event.group_id,1,1))
+            await m.insert_bot_status((self_id, group_id, 1, 1))
             return True
-        return (result[0] and result[1])
+        return bool(result[0] and result[1])

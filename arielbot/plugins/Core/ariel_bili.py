@@ -184,7 +184,8 @@ class Live(CookieManager):
         try:
             response = httpx.post(url,headers=self.headers,json=data)
             response.raise_for_status()
-            return response.json()["data"]
+            result = response.json()["data"]
+            return result if isinstance(result, dict) else None
         except Exception as e:
             logger.error(e)
             return None

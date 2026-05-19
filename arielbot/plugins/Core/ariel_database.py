@@ -332,11 +332,25 @@ class DataManager:
             WHERE
                 t2.bot=?
                 AND t2.groupId=?        
-            """
+        """
         await self.__cursor.execute(sql,data)
+        return await self.__cursor.fetchall()
+
+    async def select_sub_list_by_bot(self, bot: int) -> Optional[list]:
+        sql = """
+            SELECT DISTINCT t2.groupId, t1.uid, t1.nickname, t2.live_active, t2.dyn_active
+            FROM
+                subTarget t1
+                INNER JOIN subChennal t2 ON t1.uid = t2.uid
+            WHERE
+                t2.bot=?
+            ORDER BY
+                t2.groupId ASC,
+                t1.uid ASC
+            """
+        await self.__cursor.execute(sql, (bot,))
         return await self.__cursor.fetchall()
         
         
-
 
 

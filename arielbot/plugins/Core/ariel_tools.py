@@ -2,6 +2,7 @@ import pickle
 import time
 from dataclasses import dataclass
 from io import BytesIO
+from itertools import groupby
 
 import qrcode
 import qrcode.image.pure
@@ -152,6 +153,14 @@ class UpdateSubTools(PublicSubTools):
 
 
 class UpdateBotStatusTools:
+    @staticmethod
+    async def ensure_bot_status(ctx: ChannelCtx):
+        async with DataManager() as m:
+            result = await m.select_bot_status((ctx.self_id, ctx.group_id))
+            if result:
+                return
+            await m.insert_bot_status((ctx.self_id, ctx.group_id, 1, 1))
+
     async def update_bot_status_processor(self, ctx: ChannelCtx, status_new):
         async with DataManager() as m:
             result = await m.select_bot_status((ctx.self_id, ctx.group_id))
@@ -188,6 +197,21 @@ class SubListTools:
         if not all_data:
             return UniMessage.text("本群订阅列表为空")
         return await self.__make_sub_img(all_data)
+
+    async def get_admin_sub_list_all(self, self_id: int) -> UniMessage:
+        async with DataManager() as m:
+            all_data = await m.select_sub_list_by_bot(self_id)
+        if not all_data:
+            return UniMessage.text("当前 bot 没有任何订阅")
+        lines: list[str] = []
+        for group_id, group_items in groupby(all_data, key=lambda item: item[0]):
+            lines.append(f"群 {group_id}")
+            for _, uid, nickname, live_active, dyn_active in group_items:
+                live_text = "开" if live_active == 1 else "关"
+                dyn_text = "开" if dyn_active == 1 else "关"
+                lines.append(f"{uid} / {nickname} / live:{live_text} / dyn:{dyn_text}")
+            lines.append("")
+        return UniMessage.text("\n".join(lines[:-1]))
 
     async def __make_sub_img(self, sub_data: list) -> UniMessage:
         if len(sub_data) <= 8:

@@ -6,27 +6,31 @@ services:
     restart: unless-stopped
     environment:
       HOST: 0.0.0.0
+      ARIEL_DB_PATH: /app/data/data.sqlite
     expose:
       - "8080"
     # ports:
     #   - "8080:8080"  # uncomment if you also want host access
     volumes:
       - ./.env.prod:/app/.env.prod:ro
-      - ./data.sqlite:/app/data.sqlite
+      - ./data:/app/data
+      - ./Static:/app/Static
     networks:
       - bot-net
 
-  # example sibling container — replace with your real one
-  # napcat:
-  #   image: mlikiowa/napcat-docker:latest
-  #   restart: unless-stopped
-  #   environment:
-  #     ACCOUNT: "123456"
-  #     WS_ENABLE: "false"
-  #     HTTP_POST_ENABLE: "true"
-  #     HTTP_POST_URLS: "http://arielbot:8080/onebot/v11/http"
-  #   networks:
-  #     - bot-net
+  lagrange-milky:
+    image: ghcr.io/lagrangedev/lagrange.milky:main
+    container_name: lagrange-milky
+    restart: unless-stopped
+    working_dir: /root
+    stdin_open: true
+    tty: true
+    expose:
+      - "3000"
+    volumes:
+      - ./lagrange:/root
+    networks:
+      - bot-net
 
 networks:
   bot-net:

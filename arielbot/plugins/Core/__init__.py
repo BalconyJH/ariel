@@ -29,13 +29,25 @@ async def _():
     await UpdateBotStatusTools.shutdown_all_bot()
 
 
-@scheduler.scheduled_job("cron", second="*/8", id="dyn_pusher", max_instances=1)
-async def _():
+@scheduler.scheduled_job(
+    "cron",
+    second="*/8",
+    id="dyn_pusher",
+    name="push_dynamic",
+    max_instances=1,
+)
+async def push_dynamic():
     pusher = DynPusher()
     await pusher.push_dynamic()
 
 
-@scheduler.scheduled_job("cron", second="*/10", id="live_pusher", max_instances=1)
-async def _():
+@scheduler.scheduled_job(
+    "cron",
+    second="*/10",
+    id="live_pusher",
+    name="push_live",
+    max_instances=1,
+)
+async def push_live():
     pusher = LivePusher()
     await pusher.push_live()

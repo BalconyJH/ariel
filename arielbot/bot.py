@@ -1,13 +1,19 @@
-import nonebot
-from nonebot.adapters.onebot.v11 import Adapter
-from os import path, getcwd, listdir
-import sys
+from pathlib import Path
 
-sys.path.append(path.join(getcwd(), "plugins"))
+import nonebot
+from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
+
+
 nonebot.init()
-nonebot.load_plugin("arielbot.plugins.Core")
-nonebot.load_all_plugins([i for i in listdir(path.join(getcwd(), "plugins"))], [])
+
 driver = nonebot.get_driver()
-driver.register_adapter(Adapter)
+driver.register_adapter(OneBotV11Adapter)
+
+nonebot.load_plugin("arielbot.plugins.Core")
+
+plugins_dir = Path.cwd() / "plugins"
+if plugins_dir.exists():
+    nonebot.load_plugins(str(plugins_dir))
+
 app = nonebot.get_asgi()
-config = nonebot.get_driver().config
+config = driver.config

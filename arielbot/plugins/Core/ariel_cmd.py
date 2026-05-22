@@ -1,5 +1,6 @@
+from nonebot import get_driver
 from nonebot.permission import SUPERUSER, Permission
-from nonebot_plugin_alconna import Alconna, Args, Match, on_alconna
+from nonebot_plugin_alconna import Alconna, Args, CommandMeta, Match, on_alconna
 from nonebot_plugin_alconna.uniseg import MsgTarget, Target, UniMessage
 from nonebot_plugin_uninfo import Uninfo
 
@@ -45,78 +46,226 @@ def _is_private_session(session: Uninfo) -> bool:
     return session.scene.is_private
 
 
+def _is_superuser(session: Uninfo) -> bool:
+    return session.user.id in get_driver().config.superusers
+
+
 async def _ensure_admin_private(session: Uninfo, matcher) -> None:
     if _is_private_session(session):
         return
     await matcher.finish()
 
 
-login = on_alconna(Alconna("login"), aliases={"登录"}, permission=SUPERUSER)
+def _command_line(matcher) -> str:
+    command = matcher.command()
+    syntax = command.get_help().splitlines()[0].strip()
+    if command.meta.description:
+        return f"{syntax} - {command.meta.description}"
+    return syntax
+
+
+def _visible_help_matchers(session: Uninfo):
+    matchers = [*GROUP_HELP_MATCHERS]
+    if _is_superuser(session):
+        matchers.extend(SUPERUSER_HELP_MATCHERS)
+    return matchers
+
+
+def _build_help_text(session: Uninfo, query: str | None = None) -> str:
+    if query:
+        target = query.strip()
+        for matcher in _visible_help_matchers(session):
+            command = matcher.command()
+            if target == command.command or target == command.name:
+                return command.get_help()
+        return "没有找到可见的命令帮助"
+
+    lines = ["Ariel Help", "", "Group Commands"]
+    lines.extend(_command_line(matcher) for matcher in GROUP_HELP_MATCHERS)
+    if _is_superuser(session):
+        lines.extend(["", "Superuser Commands"])
+        lines.extend(_command_line(matcher) for matcher in SUPERUSER_HELP_MATCHERS)
+    lines.extend(["", "Use help <command> for command details."])
+    return "\n".join(lines)
+
+
+login = on_alconna(
+    Alconna("login", meta=CommandMeta(description="scan bilibili login qrcode")),
+    aliases={"登录"},
+    permission=SUPERUSER,
+)
 add_sub = on_alconna(
-    Alconna("sub", Args["uid?", str]),
+    Alconna(
+        "sub",
+        Args["uid?", str],
+        meta=CommandMeta(description="add a bilibili user subscription for this group"),
+    ),
     rule=bot_is_active,
     aliases={"订阅"},
     permission=GROUP_AUTH,
 )
 del_sub = on_alconna(
-    Alconna("unsub", Args["uid?", str]),
+    Alconna(
+        "unsub",
+        Args["uid?", str],
+        meta=CommandMeta(description="disable a bilibili user subscription for this group"),
+    ),
     rule=bot_is_active,
     aliases={"删除"},
     permission=GROUP_AUTH,
 )
 live_active = on_alconna(
-    Alconna("live_on", Args["uid?", str]),
+    Alconna(
+        "live_on",
+        Args["uid?", str],
+        meta=CommandMeta(description="enable live push for this group subscription"),
+    ),
     rule=bot_is_active,
     permission=GROUP_AUTH,
 )
 live_deactivate = on_alconna(
-    Alconna("live_off", Args["uid?", str]),
+    Alconna(
+        "live_off",
+        Args["uid?", str],
+        meta=CommandMeta(description="disable live push for this group subscription"),
+    ),
     rule=bot_is_active,
     permission=GROUP_AUTH,
 )
 dyn_active = on_alconna(
-    Alconna("dyn_on", Args["uid?", str]),
+    Alconna(
+        "dyn_on",
+        Args["uid?", str],
+        meta=CommandMeta(description="enable dynamic push for this group subscription"),
+    ),
     rule=bot_is_active,
     permission=GROUP_AUTH,
 )
 dyn_deactivate = on_alconna(
-    Alconna("dyn_off", Args["uid?", str]),
+    Alconna(
+        "dyn_off",
+        Args["uid?", str],
+        meta=CommandMeta(description="disable dynamic push for this group subscription"),
+    ),
     rule=bot_is_active,
     permission=GROUP_AUTH,
 )
-bot_active = on_alconna(Alconna("bot_on"), permission=GROUP_AUTH)
-bot_deactivate = on_alconna(Alconna("bot_off"), permission=GROUP_AUTH)
-sub_list = on_alconna(Alconna("list"), rule=bot_is_active, aliases={"列表"})
-bot_help = on_alconna(Alconna("help"))
-s_dyn = on_alconna(Alconna("sd", Args["dyn_id?", str]))
-get_img = on_alconna(Alconna("img", Args["dyn_id?", str]))
+bot_active = on_alconna(
+    Alconna("bot_on", meta=CommandMeta(description="enable bot push for this group")),
+    permission=GROUP_AUTH,
+)
+bot_deactivate = on_alconna(
+    Alconna("bot_off", meta=CommandMeta(description="disable bot push for this group")),
+    permission=GROUP_AUTH,
+)
+sub_list = on_alconna(
+    Alconna("list", meta=CommandMeta(description="show this group subscription list")),
+    rule=bot_is_active,
+    aliases={"列表"},
+)
+bot_help = on_alconna(
+    Alconna(
+        "help",
+        Args["command?", str],
+        meta=CommandMeta(description="show visible command help"),
+    )
+)
+s_dyn = on_alconna(
+    Alconna(
+        "sd",
+        Args["dyn_id?", str],
+        meta=CommandMeta(description="search rendered dynamic by id"),
+    )
+)
+get_img = on_alconna(
+    Alconna(
+        "img",
+        Args["dyn_id?", str],
+        meta=CommandMeta(description="search dynamic images by id"),
+    )
+)
 admin_sub_add = on_alconna(
-    Alconna("admin_sub_add", Args["group_id?", str]["uid?", str]),
+    Alconna(
+        "admin_sub_add",
+        Args["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="add a subscription for a target group"),
+    ),
     permission=SUPERUSER,
 )
 admin_sub_del = on_alconna(
-    Alconna("admin_sub_del", Args["group_id?", str]["uid?", str]),
+    Alconna(
+        "admin_sub_del",
+        Args["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="disable a subscription for a target group"),
+    ),
     permission=SUPERUSER,
 )
 admin_live_on = on_alconna(
-    Alconna("admin_live_on", Args["group_id?", str]["uid?", str]),
+    Alconna(
+        "admin_live_on",
+        Args["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="enable live push for a target group subscription"),
+    ),
     permission=SUPERUSER,
 )
 admin_live_off = on_alconna(
-    Alconna("admin_live_off", Args["group_id?", str]["uid?", str]),
+    Alconna(
+        "admin_live_off",
+        Args["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="disable live push for a target group subscription"),
+    ),
     permission=SUPERUSER,
 )
 admin_dyn_on = on_alconna(
-    Alconna("admin_dyn_on", Args["group_id?", str]["uid?", str]),
+    Alconna(
+        "admin_dyn_on",
+        Args["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="enable dynamic push for a target group subscription"),
+    ),
     permission=SUPERUSER,
 )
 admin_dyn_off = on_alconna(
-    Alconna("admin_dyn_off", Args["group_id?", str]["uid?", str]),
+    Alconna(
+        "admin_dyn_off",
+        Args["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="disable dynamic push for a target group subscription"),
+    ),
     permission=SUPERUSER,
 )
 admin_sub_list = on_alconna(
-    Alconna("admin_sub_list", Args["group_id?", str]),
+    Alconna(
+        "admin_sub_list",
+        Args["group_id?", str],
+        meta=CommandMeta(description="show target group subscriptions or all subscriptions"),
+    ),
     permission=SUPERUSER,
+)
+
+
+GROUP_HELP_MATCHERS = (
+    add_sub,
+    del_sub,
+    live_active,
+    live_deactivate,
+    dyn_active,
+    dyn_deactivate,
+    bot_active,
+    bot_deactivate,
+    sub_list,
+    s_dyn,
+    get_img,
+    bot_help,
+)
+
+SUPERUSER_HELP_MATCHERS = (
+    login,
+    admin_sub_add,
+    admin_sub_del,
+    admin_live_on,
+    admin_live_off,
+    admin_dyn_on,
+    admin_dyn_off,
+    admin_sub_list,
 )
 
 
@@ -217,12 +366,9 @@ async def _(session: Uninfo):
 
 
 @bot_help.handle()
-async def _():
-    await bot_help.finish(
-        UniMessage.image(
-            url="https://i0.hdslb.com/bfs/new_dyn/abef945ad1d209ad1d2360624180a15d490040351.png"
-        )
-    )
+async def _(session: Uninfo, command: Match[str]):
+    query = command.result if command.available else None
+    await bot_help.finish(UniMessage.text(_build_help_text(session, query)))
 
 
 @sub_list.handle()

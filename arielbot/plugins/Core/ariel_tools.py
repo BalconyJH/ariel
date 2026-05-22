@@ -128,7 +128,7 @@ class DelSubTools(PublicSubTools):
             return f"本群没有订阅 --> {self.uid}"
         else:
             async with DataManager() as m:
-                await m.update_sub_chennal((0, 0, self.uid, ctx.group_id, ctx.self_id))
+                await m.delete_sub_chennal((self.uid, ctx.group_id, ctx.self_id))
                 uid_info = await m.select_sub_target(self.uid)
             return f"成功删除订阅 --> {uid_info[0]}({self.uid})"
 

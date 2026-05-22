@@ -1,6 +1,9 @@
 import aiosqlite
-from os import path,getcwd
+from os import environ, getcwd, makedirs, path
 from typing import Optional
+
+DEFAULT_DB_PATH = path.join(getcwd(), "data.sqlite")
+
 
 class DataManager:
     def __init__(self):
@@ -9,7 +12,9 @@ class DataManager:
         self.dbexists = True
 
     async def __aenter__(self):
-        db_path = path.join(getcwd(),"data.sqlite")
+        db_path = environ.get("ARIEL_DB_PATH", DEFAULT_DB_PATH)
+        if db_dir := path.dirname(db_path):
+            makedirs(db_dir, exist_ok=True)
         if not path.exists(db_path):
             self.dbexists=False
         self.__conn = await aiosqlite.connect(db_path)
@@ -223,6 +228,15 @@ class DataManager:
         """
         sql = "UPDATE subChennal SET  live_active=?, dyn_active=?  WHERE uid=? AND groupId=? AND bot=?"
         await self.__cursor.execute(sql,data)
+
+    async def delete_sub_chennal(self, data: tuple):
+        """删除订阅群组记录
+
+        :param data: (uid, groupId, bot)
+        :type data: tuple
+        """
+        sql = "DELETE FROM subChennal WHERE uid=? AND groupId=? AND bot=?"
+        await self.__cursor.execute(sql, data)
         
     async def select_sub_chennal(self,data:tuple) -> Optional[set]:
         """select sun chennal data
@@ -352,5 +366,3 @@ class DataManager:
         return await self.__cursor.fetchall()
         
         
-
-

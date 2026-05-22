@@ -1,13 +1,10 @@
 import pickle
-import re
 import skia
 import asyncio
 from nonebot import logger
 from io import BytesIO
-from nonebot import get_bot
 from dynrender_skia.Core import DynRender
-from nonebot.adapters.onebot.v11 import MessageSegment,Bot
-from nonebot_plugin_alconna.uniseg import UniMessage
+from nonebot_plugin_alconna.uniseg import Target, UniMessage
 from arielbot.plugins.Core.ariel_database import DataManager
 from arielbot.plugins.Core.ariel_bili import Dynamic,Live
 
@@ -17,8 +14,8 @@ class PublicPusher:
         await asyncio.gather(*[self.process_task(i,task["message"]) for i in task["target"]])
     
     async def process_task(self,push_target,message):
-        bot:Bot = get_bot(str(push_target[1]))
-        await bot.send_group_msg(group_id=push_target[0],message=message)
+        target = Target(str(push_target[0]), self_id=str(push_target[1]))
+        await message.send(target=target)
 
 
 class DynPusher(PublicPusher):
@@ -43,38 +40,14 @@ class DynPusher(PublicPusher):
                 img = skia.Image.fromarray(img, colorType=skia.ColorType.kRGBA_8888_ColorType)
                 img_buffer = BytesIO()
                 img.save(img_buffer)
-                message = MessageSegment.text(f"{dynamic.header.name}发布了新动态:\n\n")+MessageSegment.text(f"传送门→https://t.bilibili.com/{dynamic.message_id}")+MessageSegment.image(img_buffer)
+                message = UniMessage.text(
+                    f"{dynamic.header.name}发布了新动态:\n\n"
+                    f"传送门→https://t.bilibili.com/{dynamic.message_id}"
+                ) + UniMessage.image(raw=img_buffer.getvalue())
                 task_list.append({"target":all_push_group,"message":message})
         if task_list:
             await asyncio.gather(*[self.assign_tasks(i) for i in task_list])
     
-    # @staticmethod
-    # async def push_short_link_dynamic(short_link:str):
-    #     obj = Dynamic()
-    #     location = await obj.get_short_link_location(short_link=short_link)
-    #     if location is None:
-    #         return
-    #     match = re.search(r'/opus/(\d+)\?', location)
-    #     if not match:
-    #         return
-    #     message_id = match.group(1)
-    #     async with DataManager() as m:
-    #         dynamic = await m.select_dyn_content(message_id)
-    #     if not dynamic:
-    #         dynamic = await obj.get_dynamic_from_id(message_id)
-    #         if dynamic is None:
-    #             return
-    #         else:
-    #             async with DataManager() as m:
-    #                 await m.insert_dyn_data((message_id,dynamic.header.name,pickle.dumps(dynamic)))
-    #     else:
-    #         dynamic = pickle.loads(dynamic[0])
-    #     img = await DynRender(font_family="Noto Sans CJK SC").run(dynamic)
-    #     img = skia.Image.fromarray(img, colorType=skia.ColorType.kRGBA_8888_ColorType)
-    #     img_buffer = BytesIO()
-    #     img.save(img_buffer)
-    #     return MessageSegment.image(img_buffer)
-
     @staticmethod
     async def search_dyn_by_id(message_id):
         async with DataManager() as m:
@@ -150,7 +123,11 @@ class LivePusher(PublicPusher):
                 all_push_target = await m.select_live_push(v["uid"])
             if not all_push_target:
                 continue
-            message = MessageSegment.text(f"【{v["uname"]}】开播啦!!!\n\n标题：{v["title"]}\n\n")+MessageSegment.text(f"传送门：https://live.bilibili.com/{v["room_id"]}")+MessageSegment.image(v["cover_from_user"])
+            message = UniMessage.text(
+                f"【{v['uname']}】开播啦!!!\n\n"
+                f"标题：{v['title']}\n\n"
+                f"传送门：https://live.bilibili.com/{v['room_id']}"
+            ) + UniMessage.image(url=v["cover_from_user"])
             tasks.append({"target":all_push_target,"message":message})
         if tasks:
             await asyncio.gather(*[self.assign_tasks(i) for i in tasks])

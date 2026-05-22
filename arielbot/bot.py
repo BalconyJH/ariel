@@ -1,13 +1,13 @@
 from pathlib import Path
 
 import nonebot
-from nonebot.adapters.onebot.v11 import Adapter as OneBotV11Adapter
+from nonebot.adapters.milky import Adapter as MilkyAdapter
 
 
 nonebot.init()
 
 driver = nonebot.get_driver()
-driver.register_adapter(OneBotV11Adapter)
+driver.register_adapter(MilkyAdapter)
 
 nonebot.load_plugin("arielbot.plugins.Core")
 

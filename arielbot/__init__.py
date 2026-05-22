@@ -1,15 +1,25 @@
+import json
+from os import getcwd, mkdir, path
+
 import click
-from os import path, getcwd, mkdir
 import dotenv
 import nonebot
 
 
 env = {
-    'DRIVER':'~fastapi',
-    'SUPERUSERS': [],
-    'HOST':"127.0.0.1",
-    'PORT':12315,
-    'COMMAND_START':["/"]
+    "DRIVER": "~fastapi+~httpx+~websockets",
+    "SUPERUSERS": [],
+    "HOST": "127.0.0.1",
+    "PORT": 12315,
+    "COMMAND_START": ["/"],
+    "MILKY_CLIENTS": [
+        {
+            "host": "lagrange-milky",
+            "port": 3000,
+            "access_token": "",
+            "secure": False,
+        }
+    ],
 }
 
 
@@ -36,7 +46,7 @@ def create_config():
             dotenv.set_key(
                 env_file_path,
                 key,
-                str(value).replace(' ', ''),
+                json.dumps(value, separators=(",", ":")),
                 quote_mode="never"
             )
 

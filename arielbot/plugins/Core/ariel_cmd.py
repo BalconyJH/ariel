@@ -1,4 +1,6 @@
 from nonebot import get_driver
+from nonebot.adapters.milky import Bot as MilkyBot
+from nonebot.adapters.milky import MessageEvent as MilkyMessageEvent
 from nonebot.permission import SUPERUSER, Permission
 from nonebot_plugin_alconna import Alconna, Args, CommandMeta, Match, on_alconna
 from nonebot_plugin_alconna.uniseg import MsgTarget, Target, UniMessage
@@ -48,6 +50,21 @@ def _is_private_session(session: Uninfo) -> bool:
 
 def _is_superuser(session: Uninfo) -> bool:
     return session.user.id in get_driver().config.superusers
+
+
+async def _send_message_reaction(bot: MilkyBot, event: MilkyMessageEvent, reaction: str) -> None:
+    if event.data.message_scene != "group":
+        return
+    await bot._call(
+        "send_group_message_reaction",
+        {
+            "group_id": event.data.peer_id,
+            "message_seq": event.data.message_seq,
+            "reaction": reaction,
+            "reaction_type": "face",
+            "is_add": True,
+        },
+    )
 
 
 async def _ensure_admin_private(session: Uninfo, matcher) -> None:
@@ -240,6 +257,13 @@ admin_sub_list = on_alconna(
     ),
     permission=SUPERUSER,
 )
+admin_group_list = on_alconna(
+    Alconna(
+        "admin_group_list",
+        meta=CommandMeta(description="show groups joined by current bot"),
+    ),
+    permission=SUPERUSER,
+)
 
 
 GROUP_HELP_MATCHERS = (
@@ -266,6 +290,7 @@ SUPERUSER_HELP_MATCHERS = (
     admin_dyn_on,
     admin_dyn_off,
     admin_sub_list,
+    admin_group_list,
 )
 
 
@@ -298,12 +323,16 @@ async def _(target: MsgTarget):
 
 
 @add_sub.handle()
-async def _(session: Uninfo, uid: Match[str]):
+async def _(bot: MilkyBot, event: MilkyMessageEvent, session: Uninfo, uid: Match[str]):
     target_uid = _extract_numeric(uid)
     if target_uid is None:
-        await add_sub.finish("请携带正确的uid后重试")
-    result = await AddSubTools(target_uid).add_sub_processor(_ctx_from(session))
-    await add_sub.finish(result)
+        await _send_message_reaction(bot, event, "187")
+        await add_sub.finish()
+    ctx = _ctx_from(session)
+    await UpdateBotStatusTools.ensure_bot_status(ctx)
+    await AddSubTools(target_uid).add_sub_processor(ctx)
+    await _send_message_reaction(bot, event, "144")
+    await add_sub.finish()
 
 
 @del_sub.handle()
@@ -479,3 +508,18 @@ async def _(session: Uninfo, group_id: Match[str]):
         await admin_sub_list.finish("请携带正确的群号后重试")
     msg = await tools.get_sub_list_data(_admin_ctx_from(session, target_group_id))
     await admin_sub_list.finish(msg)
+
+
+@admin_group_list.handle()
+async def _(session: Uninfo, bot: MilkyBot):
+    await _ensure_admin_private(session, admin_group_list)
+    groups = await bot.get_group_list(no_cache=True)
+    if not groups:
+        await admin_group_list.finish("Current bot has not joined any groups")
+    lines = ["Joined Groups"]
+    for group in sorted(groups, key=lambda item: item.group_id):
+        lines.append(
+            f"{group.group_id} {group.group_name} "
+            f"({group.member_count}/{group.max_member_count})"
+        )
+    await admin_group_list.finish("\n".join(lines))

@@ -128,7 +128,7 @@ class LivePusher(PublicPusher):
             for k,v in check_result.items():
                 if v["live_status"] !=1:
                     v["live_status"]=0
-                
+
                 if all_live_stauts[k] == v["live_status"]:
                     continue
                 if all_live_stauts[k] == 1:

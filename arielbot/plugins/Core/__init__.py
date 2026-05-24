@@ -3,6 +3,7 @@ from nonebot.adapters import Bot
 
 require("nonebot_plugin_apscheduler")
 require("nonebot_plugin_alconna")
+require("nonebot_plugin_permission")
 require("nonebot_plugin_uninfo")
 
 from nonebot_plugin_apscheduler import scheduler

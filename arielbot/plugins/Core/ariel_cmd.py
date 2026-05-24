@@ -1,11 +1,12 @@
-from nonebot import get_driver
+from nonebot import get_bots
+from nonebot.adapters import Bot, Event
 from nonebot.adapters.milky import Bot as MilkyBot
 from nonebot.adapters.milky import MessageEvent as MilkyMessageEvent
-from nonebot.permission import SUPERUSER, Permission
 from nonebot_plugin_alconna import Alconna, Args, CommandMeta, Match, on_alconna
 from nonebot_plugin_alconna.uniseg import MsgTarget, Target, UniMessage
 from nonebot_plugin_uninfo import Uninfo
 
+from arielbot.plugins.Core.ariel_permission import admin_permission, group_manage_permission
 from arielbot.plugins.Core.ariel_push import DynPusher
 from arielbot.plugins.Core.ariel_rule import bot_is_active
 from arielbot.plugins.Core.ariel_tools import (
@@ -19,22 +20,12 @@ from arielbot.plugins.Core.ariel_tools import (
 )
 
 
-async def _is_group_admin(session: Uninfo) -> bool:
-    member = session.member
-    if member is None or member.role is None:
-        return False
-    return member.role.id in {"ADMINISTRATOR", "OWNER"}
-
-
-GROUP_AUTH = SUPERUSER | Permission(_is_group_admin)
-
-
 def _ctx_from(session: Uninfo) -> ChannelCtx:
     return ChannelCtx(self_id=int(session.self_id), group_id=int(session.scene.id))
 
 
-def _admin_ctx_from(session: Uninfo, group_id: str) -> ChannelCtx:
-    return ChannelCtx(self_id=int(session.self_id), group_id=int(group_id))
+def _admin_ctx_from(bot_id: str, group_id: str) -> ChannelCtx:
+    return ChannelCtx(self_id=int(bot_id), group_id=int(group_id))
 
 
 def _extract_numeric(value: Match[str]) -> str | None:
@@ -46,10 +37,6 @@ def _extract_numeric(value: Match[str]) -> str | None:
 
 def _is_private_session(session: Uninfo) -> bool:
     return session.scene.is_private
-
-
-def _is_superuser(session: Uninfo) -> bool:
-    return session.user.id in get_driver().config.superusers
 
 
 async def _send_message_reaction(bot: MilkyBot, event: MilkyMessageEvent, reaction: str) -> None:
@@ -73,6 +60,17 @@ async def _ensure_admin_private(session: Uninfo, matcher) -> None:
     await matcher.finish()
 
 
+async def _required_numeric(value: Match[str], matcher, message: str) -> str:
+    target = _extract_numeric(value)
+    if target is None:
+        await matcher.finish(message)
+    return target
+
+
+async def _group_manage_when_active(event: Event, bot: Bot, session: Uninfo) -> bool:
+    return await group_manage_permission(event, bot, session) and await bot_is_active(session)
+
+
 def _command_line(matcher) -> str:
     command = matcher.command()
     syntax = command.get_help().splitlines()[0].strip()
@@ -81,17 +79,17 @@ def _command_line(matcher) -> str:
     return syntax
 
 
-def _visible_help_matchers(session: Uninfo):
+def _visible_help_matchers(include_admin: bool):
     matchers = [*GROUP_HELP_MATCHERS]
-    if _is_superuser(session):
-        matchers.extend(SUPERUSER_HELP_MATCHERS)
+    if include_admin:
+        matchers.extend(ADMIN_HELP_MATCHERS)
     return matchers
 
 
-def _build_help_text(session: Uninfo, query: str | None = None) -> str:
+def _build_help_text(query: str | None = None, include_admin: bool = False) -> str:
     if query:
         target = query.strip()
-        for matcher in _visible_help_matchers(session):
+        for matcher in _visible_help_matchers(include_admin):
             command = matcher.command()
             if target == command.command or target == command.name:
                 return command.get_help()
@@ -99,9 +97,9 @@ def _build_help_text(session: Uninfo, query: str | None = None) -> str:
 
     lines = ["Ariel Help", "", "Group Commands"]
     lines.extend(_command_line(matcher) for matcher in GROUP_HELP_MATCHERS)
-    if _is_superuser(session):
+    if include_admin:
         lines.extend(["", "Superuser Commands"])
-        lines.extend(_command_line(matcher) for matcher in SUPERUSER_HELP_MATCHERS)
+        lines.extend(_command_line(matcher) for matcher in ADMIN_HELP_MATCHERS)
     lines.extend(["", "Use help <command> for command details."])
     return "\n".join(lines)
 
@@ -109,7 +107,7 @@ def _build_help_text(session: Uninfo, query: str | None = None) -> str:
 login = on_alconna(
     Alconna("login", meta=CommandMeta(description="scan bilibili login qrcode")),
     aliases={"登录"},
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 add_sub = on_alconna(
     Alconna(
@@ -117,9 +115,8 @@ add_sub = on_alconna(
         Args["uid?", str],
         meta=CommandMeta(description="add a bilibili user subscription for this group"),
     ),
-    rule=bot_is_active,
+    rule=_group_manage_when_active,
     aliases={"订阅"},
-    permission=GROUP_AUTH,
 )
 del_sub = on_alconna(
     Alconna(
@@ -127,9 +124,8 @@ del_sub = on_alconna(
         Args["uid?", str],
         meta=CommandMeta(description="disable a bilibili user subscription for this group"),
     ),
-    rule=bot_is_active,
+    rule=_group_manage_when_active,
     aliases={"删除"},
-    permission=GROUP_AUTH,
 )
 live_active = on_alconna(
     Alconna(
@@ -137,8 +133,7 @@ live_active = on_alconna(
         Args["uid?", str],
         meta=CommandMeta(description="enable live push for this group subscription"),
     ),
-    rule=bot_is_active,
-    permission=GROUP_AUTH,
+    rule=_group_manage_when_active,
 )
 live_deactivate = on_alconna(
     Alconna(
@@ -146,8 +141,7 @@ live_deactivate = on_alconna(
         Args["uid?", str],
         meta=CommandMeta(description="disable live push for this group subscription"),
     ),
-    rule=bot_is_active,
-    permission=GROUP_AUTH,
+    rule=_group_manage_when_active,
 )
 dyn_active = on_alconna(
     Alconna(
@@ -155,8 +149,7 @@ dyn_active = on_alconna(
         Args["uid?", str],
         meta=CommandMeta(description="enable dynamic push for this group subscription"),
     ),
-    rule=bot_is_active,
-    permission=GROUP_AUTH,
+    rule=_group_manage_when_active,
 )
 dyn_deactivate = on_alconna(
     Alconna(
@@ -164,16 +157,15 @@ dyn_deactivate = on_alconna(
         Args["uid?", str],
         meta=CommandMeta(description="disable dynamic push for this group subscription"),
     ),
-    rule=bot_is_active,
-    permission=GROUP_AUTH,
+    rule=_group_manage_when_active,
 )
 bot_active = on_alconna(
     Alconna("bot_on", meta=CommandMeta(description="enable bot push for this group")),
-    permission=GROUP_AUTH,
+    rule=group_manage_permission,
 )
 bot_deactivate = on_alconna(
     Alconna("bot_off", meta=CommandMeta(description="disable bot push for this group")),
-    permission=GROUP_AUTH,
+    rule=group_manage_permission,
 )
 sub_list = on_alconna(
     Alconna("list", meta=CommandMeta(description="show this group subscription list")),
@@ -204,65 +196,82 @@ get_img = on_alconna(
 admin_sub_add = on_alconna(
     Alconna(
         "admin_sub_add",
-        Args["group_id?", str]["uid?", str],
-        meta=CommandMeta(description="add a subscription for a target group"),
+        Args["bot_id?", str]["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="add a subscription for a target bot group"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 admin_sub_del = on_alconna(
     Alconna(
         "admin_sub_del",
-        Args["group_id?", str]["uid?", str],
-        meta=CommandMeta(description="disable a subscription for a target group"),
+        Args["bot_id?", str]["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="disable a subscription for a target bot group"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 admin_live_on = on_alconna(
     Alconna(
         "admin_live_on",
-        Args["group_id?", str]["uid?", str],
-        meta=CommandMeta(description="enable live push for a target group subscription"),
+        Args["bot_id?", str]["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="enable live push for a target bot group subscription"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 admin_live_off = on_alconna(
     Alconna(
         "admin_live_off",
-        Args["group_id?", str]["uid?", str],
-        meta=CommandMeta(description="disable live push for a target group subscription"),
+        Args["bot_id?", str]["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="disable live push for a target bot group subscription"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 admin_dyn_on = on_alconna(
     Alconna(
         "admin_dyn_on",
-        Args["group_id?", str]["uid?", str],
-        meta=CommandMeta(description="enable dynamic push for a target group subscription"),
+        Args["bot_id?", str]["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="enable dynamic push for a target bot group subscription"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 admin_dyn_off = on_alconna(
     Alconna(
         "admin_dyn_off",
-        Args["group_id?", str]["uid?", str],
-        meta=CommandMeta(description="disable dynamic push for a target group subscription"),
+        Args["bot_id?", str]["group_id?", str]["uid?", str],
+        meta=CommandMeta(description="disable dynamic push for a target bot group subscription"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
+)
+admin_bot_on = on_alconna(
+    Alconna(
+        "admin_bot_on",
+        Args["bot_id?", str]["group_id?", str],
+        meta=CommandMeta(description="enable bot push for a target bot group"),
+    ),
+    rule=admin_permission,
+)
+admin_bot_off = on_alconna(
+    Alconna(
+        "admin_bot_off",
+        Args["bot_id?", str]["group_id?", str],
+        meta=CommandMeta(description="disable bot push for a target bot group"),
+    ),
+    rule=admin_permission,
 )
 admin_sub_list = on_alconna(
     Alconna(
         "admin_sub_list",
-        Args["group_id?", str],
-        meta=CommandMeta(description="show target group subscriptions or all subscriptions"),
+        Args["bot_id?", str]["group_id?", str],
+        meta=CommandMeta(description="show target bot group subscriptions or all subscriptions"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 admin_group_list = on_alconna(
     Alconna(
         "admin_group_list",
-        meta=CommandMeta(description="show groups joined by current bot"),
+        Args["bot_id?", str],
+        meta=CommandMeta(description="show groups joined by target bot"),
     ),
-    permission=SUPERUSER,
+    rule=admin_permission,
 )
 
 
@@ -281,7 +290,7 @@ GROUP_HELP_MATCHERS = (
     bot_help,
 )
 
-SUPERUSER_HELP_MATCHERS = (
+ADMIN_HELP_MATCHERS = (
     login,
     admin_sub_add,
     admin_sub_del,
@@ -289,6 +298,8 @@ SUPERUSER_HELP_MATCHERS = (
     admin_live_off,
     admin_dyn_on,
     admin_dyn_off,
+    admin_bot_on,
+    admin_bot_off,
     admin_sub_list,
     admin_group_list,
 )
@@ -395,9 +406,10 @@ async def _(session: Uninfo):
 
 
 @bot_help.handle()
-async def _(session: Uninfo, command: Match[str]):
+async def _(event: Event, bot: Bot, session: Uninfo, command: Match[str]):
     query = command.result if command.available else None
-    await bot_help.finish(UniMessage.text(_build_help_text(session, query)))
+    include_admin = await admin_permission(event, bot, session)
+    await bot_help.finish(UniMessage.text(_build_help_text(query, include_admin)))
 
 
 @sub_list.handle()
@@ -407,112 +419,125 @@ async def _(session: Uninfo):
 
 
 @admin_sub_add.handle()
-async def _(session: Uninfo, group_id: Match[str], uid: Match[str]):
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str], uid: Match[str]):
     await _ensure_admin_private(session, admin_sub_add)
-    target_group_id = _extract_numeric(group_id)
-    if target_group_id is None:
-        await admin_sub_add.finish("请携带正确的群号后重试")
-    target_uid = _extract_numeric(uid)
-    if target_uid is None:
-        await admin_sub_add.finish("请携带正确的uid后重试")
-    ctx = _admin_ctx_from(session, target_group_id)
+    target_bot_id = await _required_numeric(bot_id, admin_sub_add, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_sub_add, "请携带正确的群号后重试")
+    target_uid = await _required_numeric(uid, admin_sub_add, "请携带正确的uid后重试")
+    ctx = _admin_ctx_from(target_bot_id, target_group_id)
     await UpdateBotStatusTools.ensure_bot_status(ctx)
     result = await AddSubTools(target_uid).add_sub_processor(ctx)
     await admin_sub_add.finish(result)
 
 
 @admin_sub_del.handle()
-async def _(session: Uninfo, group_id: Match[str], uid: Match[str]):
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str], uid: Match[str]):
     await _ensure_admin_private(session, admin_sub_del)
-    target_group_id = _extract_numeric(group_id)
-    if target_group_id is None:
-        await admin_sub_del.finish("请携带正确的群号后重试")
-    target_uid = _extract_numeric(uid)
-    if target_uid is None:
-        await admin_sub_del.finish("请携带正确的uid后重试")
-    result = await DelSubTools(target_uid).del_sub_processor(_admin_ctx_from(session, target_group_id))
+    target_bot_id = await _required_numeric(bot_id, admin_sub_del, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_sub_del, "请携带正确的群号后重试")
+    target_uid = await _required_numeric(uid, admin_sub_del, "请携带正确的uid后重试")
+    result = await DelSubTools(target_uid).del_sub_processor(_admin_ctx_from(target_bot_id, target_group_id))
     await admin_sub_del.finish(result)
 
 
 @admin_live_on.handle()
-async def _(session: Uninfo, group_id: Match[str], uid: Match[str]):
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str], uid: Match[str]):
     await _ensure_admin_private(session, admin_live_on)
-    target_group_id = _extract_numeric(group_id)
-    if target_group_id is None:
-        await admin_live_on.finish("请携带正确的群号后重试")
-    target_uid = _extract_numeric(uid)
-    if target_uid is None:
-        await admin_live_on.finish("请携带正确的uid后重试")
-    ctx = _admin_ctx_from(session, target_group_id)
+    target_bot_id = await _required_numeric(bot_id, admin_live_on, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_live_on, "请携带正确的群号后重试")
+    target_uid = await _required_numeric(uid, admin_live_on, "请携带正确的uid后重试")
+    ctx = _admin_ctx_from(target_bot_id, target_group_id)
     await UpdateBotStatusTools.ensure_bot_status(ctx)
     result = await UpdateSubTools(target_uid).update_sub_handler(ctx, 1)
     await admin_live_on.finish(result)
 
 
 @admin_live_off.handle()
-async def _(session: Uninfo, group_id: Match[str], uid: Match[str]):
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str], uid: Match[str]):
     await _ensure_admin_private(session, admin_live_off)
-    target_group_id = _extract_numeric(group_id)
-    if target_group_id is None:
-        await admin_live_off.finish("请携带正确的群号后重试")
-    target_uid = _extract_numeric(uid)
-    if target_uid is None:
-        await admin_live_off.finish("请携带正确的uid后重试")
-    ctx = _admin_ctx_from(session, target_group_id)
+    target_bot_id = await _required_numeric(bot_id, admin_live_off, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_live_off, "请携带正确的群号后重试")
+    target_uid = await _required_numeric(uid, admin_live_off, "请携带正确的uid后重试")
+    ctx = _admin_ctx_from(target_bot_id, target_group_id)
     await UpdateBotStatusTools.ensure_bot_status(ctx)
     result = await UpdateSubTools(target_uid).update_sub_handler(ctx, 0)
     await admin_live_off.finish(result)
 
 
 @admin_dyn_on.handle()
-async def _(session: Uninfo, group_id: Match[str], uid: Match[str]):
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str], uid: Match[str]):
     await _ensure_admin_private(session, admin_dyn_on)
-    target_group_id = _extract_numeric(group_id)
-    if target_group_id is None:
-        await admin_dyn_on.finish("请携带正确的群号后重试")
-    target_uid = _extract_numeric(uid)
-    if target_uid is None:
-        await admin_dyn_on.finish("请携带正确的uid后重试")
-    ctx = _admin_ctx_from(session, target_group_id)
+    target_bot_id = await _required_numeric(bot_id, admin_dyn_on, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_dyn_on, "请携带正确的群号后重试")
+    target_uid = await _required_numeric(uid, admin_dyn_on, "请携带正确的uid后重试")
+    ctx = _admin_ctx_from(target_bot_id, target_group_id)
     await UpdateBotStatusTools.ensure_bot_status(ctx)
     result = await UpdateSubTools(target_uid).update_sub_handler(ctx, dyn_active=1)
     await admin_dyn_on.finish(result)
 
 
 @admin_dyn_off.handle()
-async def _(session: Uninfo, group_id: Match[str], uid: Match[str]):
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str], uid: Match[str]):
     await _ensure_admin_private(session, admin_dyn_off)
-    target_group_id = _extract_numeric(group_id)
-    if target_group_id is None:
-        await admin_dyn_off.finish("请携带正确的群号后重试")
-    target_uid = _extract_numeric(uid)
-    if target_uid is None:
-        await admin_dyn_off.finish("请携带正确的uid后重试")
-    ctx = _admin_ctx_from(session, target_group_id)
+    target_bot_id = await _required_numeric(bot_id, admin_dyn_off, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_dyn_off, "请携带正确的群号后重试")
+    target_uid = await _required_numeric(uid, admin_dyn_off, "请携带正确的uid后重试")
+    ctx = _admin_ctx_from(target_bot_id, target_group_id)
     await UpdateBotStatusTools.ensure_bot_status(ctx)
     result = await UpdateSubTools(target_uid).update_sub_handler(ctx, dyn_active=0)
     await admin_dyn_off.finish(result)
 
 
+@admin_bot_on.handle()
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str]):
+    await _ensure_admin_private(session, admin_bot_on)
+    target_bot_id = await _required_numeric(bot_id, admin_bot_on, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_bot_on, "请携带正确的群号后重试")
+    result = await UpdateBotStatusTools().update_bot_status_processor(
+        _admin_ctx_from(target_bot_id, target_group_id),
+        1,
+    )
+    await admin_bot_on.finish(result)
+
+
+@admin_bot_off.handle()
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str]):
+    await _ensure_admin_private(session, admin_bot_off)
+    target_bot_id = await _required_numeric(bot_id, admin_bot_off, "请携带正确的bot号后重试")
+    target_group_id = await _required_numeric(group_id, admin_bot_off, "请携带正确的群号后重试")
+    result = await UpdateBotStatusTools().update_bot_status_processor(
+        _admin_ctx_from(target_bot_id, target_group_id),
+        0,
+    )
+    if result is None:
+        await admin_bot_off.finish()
+    await admin_bot_off.finish(result)
+
+
 @admin_sub_list.handle()
-async def _(session: Uninfo, group_id: Match[str]):
+async def _(session: Uninfo, bot_id: Match[str], group_id: Match[str]):
     await _ensure_admin_private(session, admin_sub_list)
+    target_bot_id = await _required_numeric(bot_id, admin_sub_list, "请携带正确的bot号后重试")
     if not group_id.available:
         await admin_sub_list.finish("请携带正确的群号后重试")
     target_group_id = group_id.result.strip()
     tools = SubListTools()
     if target_group_id == "all":
-        msg = await tools.get_admin_sub_list_all(int(session.self_id))
+        msg = await tools.get_admin_sub_list_all(int(target_bot_id))
         await admin_sub_list.finish(msg)
     if not target_group_id.isdigit():
         await admin_sub_list.finish("请携带正确的群号后重试")
-    msg = await tools.get_sub_list_data(_admin_ctx_from(session, target_group_id))
+    msg = await tools.get_admin_sub_list_data(_admin_ctx_from(target_bot_id, target_group_id))
     await admin_sub_list.finish(msg)
 
 
 @admin_group_list.handle()
-async def _(session: Uninfo, bot: MilkyBot):
+async def _(session: Uninfo, bot_id: Match[str]):
     await _ensure_admin_private(session, admin_group_list)
+    target_bot_id = await _required_numeric(bot_id, admin_group_list, "请携带正确的bot号后重试")
+    bot = get_bots().get(target_bot_id)
+    if bot is None:
+        await admin_group_list.finish(f"目标 bot 未连接 --> {target_bot_id}")
     groups = await bot.get_group_list(no_cache=True)
     if not groups:
         await admin_group_list.finish("Current bot has not joined any groups")

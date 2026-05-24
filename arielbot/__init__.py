@@ -12,6 +12,9 @@ env = {
     "HOST": "127.0.0.1",
     "PORT": 12315,
     "COMMAND_START": ["/"],
+    "SENTRY_DSN": "",
+    "SENTRY_TRACES_SAMPLE_RATE": 0.0,
+    "SENTRY_SEND_DEFAULT_PII": False,
     "MILKY_CLIENTS": [
         {
             "host": "lagrange-milky",

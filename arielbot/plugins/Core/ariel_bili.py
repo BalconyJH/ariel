@@ -1,10 +1,10 @@
 import time
-import httpx
 import urllib.parse
 from hashlib import md5
 from nonebot import logger
 from functools import reduce
 from typing import Optional,List,Union
+from arielbot.ariel_sentry import sentry_http_get, sentry_http_post
 from arielbot.plugins.Core.ariel_cookie import CookieManager
 from dynamicadaptor.Message import RenderMessage
 from dynamicadaptor.DynamicConversion import formate_message
@@ -40,7 +40,7 @@ class Login:
             "qrcode_key":self.qrcode_key
         }
         try:
-            response = httpx.get(url,headers=self.headers,params=params)
+            response = sentry_http_get(url,headers=self.headers,params=params)
             response.raise_for_status()
             return response.json()["data"]
         except Exception as e:
@@ -50,7 +50,7 @@ class Login:
     async def get_qrcode_key(self):
         url = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
         try:
-            response = httpx.get(url,headers=self.headers)
+            response = sentry_http_get(url,headers=self.headers)
             response.raise_for_status()
             self.qrcode_key = response.json()["data"]["qrcode_key"]
             return response.json()["data"]["url"]
@@ -88,7 +88,7 @@ class Dynamic(CookieManager):
             "x-bili-web-req-json":{"spm_id":"333.1365"}
         }
         try:
-            response = httpx.get(headers=self.headers,url=url,cookies=self.cookie,params=params)
+            response = sentry_http_get(url,headers=self.headers,cookies=self.cookie,params=params)
             response.raise_for_status()
             data = response.json()
             if data["code"] != 0:
@@ -134,7 +134,7 @@ class Dynamic(CookieManager):
         )
         url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/detail"
         try:
-            response = httpx.get(headers=self.headers,url = url,params=signed_params,cookies=self.cookie)
+            response = sentry_http_get(url,headers=self.headers,params=signed_params,cookies=self.cookie)
             response.raise_for_status()
             return await formate_message("web",response.json()["data"]["item"])
         except Exception as e:
@@ -143,7 +143,7 @@ class Dynamic(CookieManager):
     
     async def get_short_link_location(self,short_link:str):
         try:
-            response = httpx.get(url=short_link,headers=self.headers)
+            response = sentry_http_get(short_link,headers=self.headers)
             return response.headers.get("Location",None)
         except Exception as e:
             logger.error(f"get short link location error:{e}")
@@ -169,7 +169,7 @@ class Live(CookieManager):
         }
         url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/portal"
         try:
-            response = httpx.get(headers=self.headers,url=url,cookies=self.cookie,params=params)
+            response = sentry_http_get(url,headers=self.headers,cookies=self.cookie,params=params)
             response.raise_for_status()
             return response.json()["data"]["live_users"]
         except Exception as e:
@@ -182,7 +182,7 @@ class Live(CookieManager):
             "uids":uids
         }
         try:
-            response = httpx.post(url,headers=self.headers,json=data)
+            response = sentry_http_post(url,headers=self.headers,json=data)
             response.raise_for_status()
             result = response.json()["data"]
             return result if isinstance(result, dict) else None
@@ -216,7 +216,7 @@ class UserInfo(CookieManager):
             "referer":"https://t.bilibili.com/"
         })
         try:
-            response = httpx.get(url,headers=self.headers,cookies=self.cookie,params=params)
+            response = sentry_http_get(url,headers=self.headers,cookies=self.cookie,params=params)
             response.raise_for_status()
             if response.json()["code"] !=0:
                 return "未找到相关UP信息"
@@ -241,7 +241,7 @@ class UserInfo(CookieManager):
             "csrf":self.cookie["bili_jct"]
         }
         try:
-            response = httpx.post(url,headers=self.headers,cookies=self.cookie,data=data)
+            response = sentry_http_post(url,headers=self.headers,cookies=self.cookie,data=data)
             response.raise_for_status()
             if response.json()["code"]==0:
                 return True
@@ -268,7 +268,7 @@ class Sign:
         
     async def getWbiKeys(self) -> None:
         try:
-            resp = httpx.get('https://api.bilibili.com/x/web-interface/nav', headers=self.headers)
+            resp = sentry_http_get('https://api.bilibili.com/x/web-interface/nav', headers=self.headers)
             resp.raise_for_status()
             json_content = resp.json()
             img_url: str = json_content['data']['wbi_img']['img_url']

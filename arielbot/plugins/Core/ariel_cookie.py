@@ -1,6 +1,5 @@
 import re
 import time
-import httpx
 import pickle
 import binascii
 from nonebot import logger
@@ -9,6 +8,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 from http.cookies import SimpleCookie
 from datetime import datetime,timezone
+from arielbot.ariel_sentry import sentry_http_get, sentry_http_post
 from arielbot.plugins.Core.ariel_database import DataManager
 
 class CookieManager:
@@ -65,7 +65,7 @@ JNrRuoEUXpabUzGB8QIDAQAB
         params = {"csrf":self.cookie["bili_jct"]}
         url = "https://passport.bilibili.com/x/passport-login/web/cookie/info"
         try:
-            response = httpx.get(url,headers=self.headers,params=params,cookies=self.cookie)
+            response = sentry_http_get(url,headers=self.headers,params=params,cookies=self.cookie)
             cipher = PKCS1_OAEP.new(self.key, SHA256)
             encrypted = cipher.encrypt(f'refresh_{response.json()["data"]["timestamp"]}'.encode())
             return binascii.b2a_hex(encrypted).decode()
@@ -76,7 +76,7 @@ JNrRuoEUXpabUzGB8QIDAQAB
     async def __get_refresh_csrf(self,correspond_path):
         url = f"https://www.bilibili.com/correspond/1/{correspond_path}"
         try:
-            respoese = httpx.get(url,headers=self.headers,cookies=self.cookie)
+            respoese = sentry_http_get(url,headers=self.headers,cookies=self.cookie)
             pattern = re.compile(r'<div\s+id\s*=\s*["\']1-name["\']\s*>(.*?)</div>',flags=re.DOTALL)
             match = pattern.search(respoese.text)
             return match.group(1).strip()
@@ -94,7 +94,7 @@ JNrRuoEUXpabUzGB8QIDAQAB
             "refresh_token":self.refresh_token
         }
         try:
-            response = httpx.post(url,headers=self.headers,data=data,cookies=self.cookie)
+            response = sentry_http_post(url,headers=self.headers,data=data,cookies=self.cookie)
             new_refresh_token  = response.json()["data"]["refresh_token"]
             new_cookies = response.headers.get_list("Set-Cookie")
             parsed_cookies = [await self.__parse_cookie_attributes(c) for c in  new_cookies]

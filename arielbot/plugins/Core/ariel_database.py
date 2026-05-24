@@ -2,6 +2,8 @@ import aiosqlite
 from os import environ, getcwd, makedirs, path
 from typing import Optional
 
+from arielbot.ariel_sentry import sentry_span
+
 DEFAULT_DB_PATH = path.join(getcwd(), "data.sqlite")
 
 
@@ -9,37 +11,64 @@ class DataManager:
     def __init__(self):
         self.__conn: Optional[aiosqlite.Connection] = None
         self.__cursor:Optional[aiosqlite.Cursor] = None
-        self.dbexists = True
+        self.__sentry_span = None
 
     async def __aenter__(self):
         db_path = environ.get("ARIEL_DB_PATH", DEFAULT_DB_PATH)
-        if db_dir := path.dirname(db_path):
-            makedirs(db_dir, exist_ok=True)
-        if not path.exists(db_path):
-            self.dbexists=False
-        self.__conn = await aiosqlite.connect(db_path)
-        self.__cursor = await self.__conn.cursor()
-        await self.__cursor.execute("BEGIN")
-        if not self.dbexists:
-            await self.__cursor.execute("PRAGMA foreign_keys = ON;")
-            await self.__creat_subTarget_table()
-            await self.__creat_subChennal_table()
-            await self.__creat_botStatus_table()
-            await self.__creat_cookie_table()
-            await self.__creat_dynamic_table()
-        return self
+        self.__sentry_span = sentry_span(
+            "db.transaction",
+            "sqlite transaction",
+            **{
+                "db.system": "sqlite",
+                "db.name": path.basename(db_path),
+            },
+        )
+        self.__sentry_span.__enter__()
+        try:
+            if db_dir := path.dirname(db_path):
+                makedirs(db_dir, exist_ok=True)
+            self.__conn = await aiosqlite.connect(db_path)
+            await self.__conn.execute("PRAGMA foreign_keys = ON;")
+            self.__cursor = await self.__conn.cursor()
+            await self.__cursor.execute("BEGIN")
+            await self.__ensure_schema()
+            return self
+        except Exception as exc:
+            if self.__cursor is not None:
+                await self.__cursor.close()
+                self.__cursor = None
+            if self.__conn is not None:
+                await self.__conn.close()
+                self.__conn = None
+            self.__sentry_span.__exit__(type(exc), exc, exc.__traceback__)
+            self.__sentry_span = None
+            raise
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            await self.__conn.commit()
-        else:
-            await self.__conn.rollback()
-        await self.__cursor.close()
-        await self.__conn.close()
-        self.__cursor = None
-        self.__conn = None
+        try:
+            if exc_type is None:
+                await self.__conn.commit()
+            else:
+                await self.__conn.rollback()
+            await self.__cursor.close()
+            await self.__conn.close()
+        finally:
+            if self.__sentry_span is not None:
+                self.__sentry_span.__exit__(exc_type, exc_val, exc_tb)
+                self.__sentry_span = None
+            self.__cursor = None
+            self.__conn = None
+
+    async def __ensure_schema(self):
+        await self.__create_sub_target_table()
+        await self.__create_sub_channel_table()
+        await self.__create_bot_status_table()
+        await self.__create_cookie_table()
+        await self.__create_dynamic_table()
+        await self.__deduplicate_rows()
+        await self.__create_indexes()
     
-    async def __creat_subTarget_table(self):
+    async def __create_sub_target_table(self):
         sql ="""
             CREATE TABLE IF NOT EXISTS subTarget (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -51,9 +80,9 @@ class DataManager:
         
         await self.__cursor.execute(sql)
     
-    async def __creat_subChennal_table(self):
+    async def __create_sub_channel_table(self):
         sql ="""
-            CREATE TABLE IF NOT EXISTS subChennal (
+            CREATE TABLE IF NOT EXISTS subChannel (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
                 uid TEXT NOT NULL,
                 groupId INTEGER NOT NULL,
@@ -67,7 +96,7 @@ class DataManager:
             """
         await self.__cursor.execute(sql)
         
-    async def __creat_botStatus_table(self):
+    async def __create_bot_status_table(self):
         sql ="""
             CREATE TABLE IF NOT EXISTS botStatus (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -79,7 +108,7 @@ class DataManager:
             """
         await self.__cursor.execute(sql)
             
-    async def __creat_cookie_table(self):
+    async def __create_cookie_table(self):
         sql ="""
             CREATE TABLE IF NOT EXISTS Cookie (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -89,7 +118,7 @@ class DataManager:
             """
         await self.__cursor.execute(sql)
 
-    async def __creat_dynamic_table(self):
+    async def __create_dynamic_table(self):
         sql ="""
             CREATE TABLE IF NOT EXISTS Dynamic (
                 dyn_id TEXT NOT NULL PRIMARY KEY,
@@ -99,9 +128,43 @@ class DataManager:
             """
         await self.__cursor.execute(sql)
 
+    async def __deduplicate_rows(self):
+        await self.__cursor.execute(
+            """
+            DELETE FROM subChannel
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM subChannel
+                GROUP BY uid, groupId, bot
+            );
+            """
+        )
+        await self.__cursor.execute(
+            """
+            DELETE FROM botStatus
+            WHERE id NOT IN (
+                SELECT MIN(id)
+                FROM botStatus
+                GROUP BY bot, groupId
+            );
+            """
+        )
+
+    async def __create_indexes(self):
+        indexes = (
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_subChannel_unique ON subChannel(uid, groupId, bot);",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_botStatus_unique ON botStatus(bot, groupId);",
+            "CREATE INDEX IF NOT EXISTS idx_subChannel_push ON subChannel(uid, live_active, dyn_active);",
+            "CREATE INDEX IF NOT EXISTS idx_subChannel_group ON subChannel(bot, groupId);",
+            "CREATE INDEX IF NOT EXISTS idx_botStatus_push ON botStatus(bot, groupId, push_active, bot_active);",
+            "CREATE INDEX IF NOT EXISTS idx_subTarget_live ON subTarget(uid, live_status);",
+        )
+        for sql in indexes:
+            await self.__cursor.execute(sql)
+
 
 #bot status process
-    async def select_bot_status(self,data:set) -> Optional[set]:
+    async def select_bot_status(self,data:tuple) -> Optional[tuple]:
         """select bot status
 
         Args:
@@ -124,16 +187,21 @@ class DataManager:
         await self.__cursor.execute(sql)
         return await self.__cursor.fetchall()
     
-    async def insert_bot_status(self,data:set):
+    async def insert_bot_status(self,data:tuple):
         """insert bot status
 
         Args:
             data (set): (bot,groupId,push_active,bot_active)
         """
-        sql = "INSERT INTO botStatus (bot,groupId,push_active,bot_active) VALUES (?, ?,?,?);"
+        sql = """
+            INSERT INTO botStatus (bot,groupId,push_active,bot_active)
+            VALUES (?, ?,?,?)
+            ON CONFLICT(bot, groupId) DO UPDATE SET
+                push_active=excluded.push_active;
+            """
         await self.__cursor.execute(sql,data)
         
-    async def update_bot_push_status(self,data:set) -> None:
+    async def update_bot_push_status(self,data:tuple) -> None:
         """update bot push status
 
         Args:
@@ -142,7 +210,7 @@ class DataManager:
         sql = "UPDATE botStatus SET push_active = ?  WHERE bot=? AND groupId=?"
         await self.__cursor.execute(sql,data)
         
-    async def updata_bot_active_status(self,data:set):
+    async def update_bot_active_status(self,data:tuple):
         """update bot active status
 
         Args:
@@ -150,6 +218,11 @@ class DataManager:
         """
         sql = "UPDATE botStatus SET bot_active = ? WHERE bot=?"
         await self.__cursor.execute(sql,data)
+
+    async def select_bot_status_by_bot(self, bot: int) -> list:
+        sql = "SELECT groupId,push_active,bot_active FROM botStatus WHERE bot=? ORDER BY groupId ASC"
+        await self.__cursor.execute(sql, (bot,))
+        return await self.__cursor.fetchall()
         
 
 # cookie process
@@ -158,11 +231,11 @@ class DataManager:
         await self.__cursor.execute(sql)
         return await self.__cursor.fetchone()  
     
-    async def insert_cookie(self,data:set):
+    async def insert_cookie(self,data:tuple):
         sql = "INSERT INTO Cookie (cookie,refresh_token) VALUES (?, ?);"
         await self.__cursor.execute(sql,data)
     
-    async def update_cookie(self,data:set):
+    async def update_cookie(self,data:tuple):
         sql = "UPDATE Cookie SET cookie = ? , refresh_token=?  WHERE refresh_token=?"
         await self.__cursor.execute(sql,data)
 
@@ -182,7 +255,7 @@ class DataManager:
         Args:
             dyn_data (tuple): (dyn_id,uname,dyn_content)
         """
-        sql = "INSERT INTO Dynamic (dyn_id,uname,dyn_content) VALUES (?, ?,?);"
+        sql = "INSERT OR IGNORE INTO Dynamic (dyn_id,uname,dyn_content) VALUES (?, ?,?);"
         await self.__cursor.execute(sql,dyn_data)
 
 # subTarget process
@@ -192,7 +265,12 @@ class DataManager:
         :param sub_data: (uid,nickname,live_status)
         :type sub_data: tuple
         """
-        sql = "INSERT INTO subTarget (uid,nickname,live_status) VALUES (?, ?,?);"
+        sql = """
+            INSERT INTO subTarget (uid,nickname,live_status)
+            VALUES (?, ?,?)
+            ON CONFLICT(uid) DO UPDATE SET
+                nickname=excluded.nickname;
+            """
         await self.__cursor.execute(sql,sub_data)
     
     async def select_sub_target(self,uid:str):
@@ -209,37 +287,43 @@ class DataManager:
         sql = "UPDATE subTarget SET  nickname=?, live_status=?  WHERE uid=?"
         await self.__cursor.execute(sql,data)
 
-#subChennal process
+# subChannel process
 
-    async def insert_sub_chennal(self,data:tuple):
+    async def insert_sub_channel(self,data:tuple):
         """增加订阅群组及机器人记录
 
         :param data: (uid,groupId,bot)
         :type data: tuple
         """
-        sql = "INSERT INTO subChennal (uid,groupId,bot) VALUES (?, ?,?);"
+        sql = """
+            INSERT INTO subChannel (uid,groupId,bot)
+            VALUES (?, ?,?)
+            ON CONFLICT(uid, groupId, bot) DO UPDATE SET
+                live_active=1,
+                dyn_active=1;
+            """
         await self.__cursor.execute(sql,data)
     
-    async def update_sub_chennal(self,data:tuple):
+    async def update_sub_channel(self,data:tuple):
         """修改订阅群组记录
 
         :param data: (live_active,dyn_active,uid,groupId,bot)
         :type data: tuple
         """
-        sql = "UPDATE subChennal SET  live_active=?, dyn_active=?  WHERE uid=? AND groupId=? AND bot=?"
+        sql = "UPDATE subChannel SET  live_active=?, dyn_active=?  WHERE uid=? AND groupId=? AND bot=?"
         await self.__cursor.execute(sql,data)
 
-    async def delete_sub_chennal(self, data: tuple):
+    async def delete_sub_channel(self, data: tuple):
         """删除订阅群组记录
 
         :param data: (uid, groupId, bot)
         :type data: tuple
         """
-        sql = "DELETE FROM subChennal WHERE uid=? AND groupId=? AND bot=?"
+        sql = "DELETE FROM subChannel WHERE uid=? AND groupId=? AND bot=?"
         await self.__cursor.execute(sql, data)
         
-    async def select_sub_chennal(self,data:tuple) -> Optional[set]:
-        """select sun chennal data
+    async def select_sub_channel(self,data:tuple) -> Optional[tuple]:
+        """select sub channel data
 
         Args:
             data (tuple): (uid, groupId, bot)
@@ -247,7 +331,7 @@ class DataManager:
         Returns:
             Optional[set]: 
         """
-        sql = "SELECT  live_active, dyn_active FROM subChennal  WHERE uid=? AND groupId=? AND bot=?"
+        sql = "SELECT  live_active, dyn_active FROM subChannel  WHERE uid=? AND groupId=? AND bot=?"
         await self.__cursor.execute(sql,data)
         return await self.__cursor.fetchone()
     
@@ -265,7 +349,7 @@ class DataManager:
             SELECT DISTINCT t2.groupId, t2.bot
             FROM 
                 subTarget t1
-                INNER JOIN subChennal t2 ON t1.uid = t2.uid
+                INNER JOIN subChannel t2 ON t1.uid = t2.uid
                 INNER JOIN botStatus t3 ON t2.groupId = t3.groupId AND t2.bot = t3.bot
             WHERE 
                 t1.uid = ? 
@@ -291,7 +375,7 @@ class DataManager:
                 SELECT DISTINCT t1.uid,t1.live_status
                 FROM 
                     subTarget t1
-                    INNER JOIN subChennal t2 ON t1.uid = t2.uid
+                    INNER JOIN subChannel t2 ON t1.uid = t2.uid
                     INNER JOIN botStatus t3 ON t2.groupId = t3.groupId AND t2.bot = t3.bot
                 WHERE 
                     t3.push_active = 1
@@ -315,7 +399,7 @@ class DataManager:
                 SELECT DISTINCT t2.groupId, t2.bot
                 FROM 
                     subTarget t1
-                    INNER JOIN subChennal t2 ON t1.uid = t2.uid
+                    INNER JOIN subChannel t2 ON t1.uid = t2.uid
                     INNER JOIN botStatus t3 ON t2.groupId = t3.groupId AND t2.bot = t3.bot
                 WHERE 
                     t1.uid = ? 
@@ -328,7 +412,7 @@ class DataManager:
             return await self.__cursor.fetchall()
 
 # get sub list
-    async def select_sub_list(self,data:set) -> Optional[list]:
+    async def select_sub_list(self,data:tuple) -> Optional[list]:
         """select sub list data
 
         Args:
@@ -342,7 +426,7 @@ class DataManager:
             SELECT DISTINCT t1.uid, t1.nickname,t2.live_active,t2.dyn_active
             FROM
                 subTarget t1
-                INNER JOIN subChennal t2 ON t1.uid = t2.uid
+                INNER JOIN subChannel t2 ON t1.uid = t2.uid
             WHERE
                 t2.bot=?
                 AND t2.groupId=?        
@@ -355,7 +439,7 @@ class DataManager:
             SELECT DISTINCT t2.groupId, t1.uid, t1.nickname, t2.live_active, t2.dyn_active
             FROM
                 subTarget t1
-                INNER JOIN subChennal t2 ON t1.uid = t2.uid
+                INNER JOIN subChannel t2 ON t1.uid = t2.uid
             WHERE
                 t2.bot=?
             ORDER BY

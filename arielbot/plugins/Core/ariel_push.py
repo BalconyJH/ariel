@@ -1,6 +1,7 @@
 import pickle
 import skia
 import asyncio
+import time
 from nonebot import logger
 from io import BytesIO
 from dynrender_skia.Core import DynRender
@@ -8,6 +9,7 @@ from nonebot_plugin_alconna.uniseg import Target, UniMessage
 from arielbot.ariel_sentry import sentry_span
 from arielbot.plugins.Core.ariel_database import DataManager
 from arielbot.plugins.Core.ariel_bili import Dynamic,Live
+from arielbot.plugins.Core.ariel_live_state import should_suppress_live_push
 
 
 class PublicPusher:
@@ -124,38 +126,60 @@ class DynPusher(PublicPusher):
 class LivePusher(PublicPusher):
     
     async def push_live(self):
-        with sentry_span("ariel.push.live", "push live"):
+        with sentry_span("ariel.push.live", "push live") as span:
             async with DataManager() as m:
                 all_check_uid_list = await m.select_live_check_uid()
             if not all_check_uid_list:
+                span.set_data("live.check_uid_count", 0)
                 return
-            all_live_stauts = {f"{i[0]}":i[1] for i in all_check_uid_list}
+            span.set_data("live.check_uid_count", len(all_check_uid_list))
+            all_live_statuses = {f"{i[0]}":(i[1], i[2]) for i in all_check_uid_list}
             all_check_uid_list = [i[0] for i in all_check_uid_list]
             check_result= await Live().get_room_info_by_uids(all_check_uid_list)
             if check_result  is None:
+                span.set_data("live.fetch_result", "empty")
                 return
+            span.set_data("live.room_count", len(check_result))
+            detected_at = int(time.time())
             tasks = []
             for k,v in check_result.items():
                 if v["live_status"] !=1:
                     v["live_status"]=0
 
-                if all_live_stauts[k] == v["live_status"]:
+                live_status, last_live_end_time = all_live_statuses[k]
+                if live_status == v["live_status"]:
                     continue
-                if all_live_stauts[k] == 1:
+                if live_status == 1:
                     async with DataManager() as m:
-                        await m.update_sub_target((v["uname"],0,v["uid"]))
+                        await m.update_sub_target_live_end((v["uname"],0,detected_at,v["uid"]))
+                    logger.info(f"Detected live end: uid={v['uid']}, uname={v['uname']}")
                     continue
+                suppress_live_push = should_suppress_live_push(last_live_end_time, detected_at)
                 async with DataManager() as m:
                     await m.update_sub_target((v["uname"],1,v["uid"]))
-                    all_push_target = await m.select_live_push(v["uid"])
-                if not all_push_target:
+                    if not suppress_live_push:
+                        all_push_target = await m.select_live_push(v["uid"])
+                if suppress_live_push:
+                    elapsed = detected_at - last_live_end_time if last_live_end_time is not None else None
+                    logger.info(
+                        f"Suppress live restart push: uid={v['uid']}, "
+                        f"uname={v['uname']}, elapsed={elapsed}"
+                    )
                     continue
+                if not all_push_target:
+                    logger.debug(f"Skip live push without subscribers: uid={v['uid']}, uname={v['uname']}")
+                    continue
+                logger.info(
+                    f"Detected live start: uid={v['uid']}, uname={v['uname']}, "
+                    f"target_count={len(all_push_target)}"
+                )
                 message = UniMessage.text(
                     f"【{v['uname']}】开播啦!!!\n\n"
                     f"标题：{v['title']}\n\n"
                     f"传送门：https://live.bilibili.com/{v['room_id']}"
                 ) + UniMessage.image(url=v["cover_from_user"])
                 tasks.append({"target":all_push_target,"message":message})
+            span.set_data("push.task_count", len(tasks))
             if tasks:
                 await asyncio.gather(*[self.assign_tasks(i) for i in tasks])
     

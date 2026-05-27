@@ -74,7 +74,8 @@ class DataManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
                 nickname TEXT NOT NULL,
                 uid TEXT NOT NULL UNIQUE,
-                live_status INTEGER NOT NULL DEFAULT 1 CHECK(live_status IN (0, 1))
+                live_status INTEGER NOT NULL DEFAULT 1 CHECK(live_status IN (0, 1)),
+                last_live_end_time INTEGER
             );
             """
         
@@ -287,6 +288,15 @@ class DataManager:
         sql = "UPDATE subTarget SET  nickname=?, live_status=?  WHERE uid=?"
         await self.__cursor.execute(sql,data)
 
+    async def update_sub_target_live_end(self, data: tuple):
+        """Update subscription target status with the last detected live end time.
+
+        :param data: (nickname, live_status, last_live_end_time, uid)
+        :type data: tuple
+        """
+        sql = "UPDATE subTarget SET nickname=?, live_status=?, last_live_end_time=? WHERE uid=?"
+        await self.__cursor.execute(sql, data)
+
 # subChannel process
 
     async def insert_sub_channel(self,data:tuple):
@@ -363,16 +373,13 @@ class DataManager:
 
 #find live check uid
     async def select_live_check_uid(self) -> Optional[list]:
-            """select dynamic push group and bot
-
-            Args:
-                uid (str): uid
+            """Select subscribed targets that need live status checks.
 
             Returns:
-                Optional[list]: [(groupId,bot)]
+                Optional[list]: [(uid, live_status, last_live_end_time)]
             """
             sql = """
-                SELECT DISTINCT t1.uid,t1.live_status
+                SELECT DISTINCT t1.uid,t1.live_status,t1.last_live_end_time
                 FROM 
                     subTarget t1
                     INNER JOIN subChannel t2 ON t1.uid = t2.uid

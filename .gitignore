@@ -26,6 +26,9 @@ share/python-wheels/
 *.egg
 MANIFEST
 tests/
+!tests/
+!tests/__init__.py
+!tests/test_live_state.py
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

@@ -43,8 +43,8 @@ class Login:
             response = sentry_http_get(url,headers=self.headers,params=params)
             response.raise_for_status()
             return response.json()["data"]
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to poll Bilibili login QR code")
             return None
 
     async def get_qrcode_key(self):
@@ -54,8 +54,8 @@ class Login:
             response.raise_for_status()
             self.qrcode_key = response.json()["data"]["qrcode_key"]
             return response.json()["data"]["url"]
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to generate Bilibili login QR code")
             return None
 
 
@@ -92,11 +92,11 @@ class Dynamic(CookieManager):
             response.raise_for_status()
             data = response.json()
             if data["code"] != 0:
-                logger.warning("get dynamic from follow list data code is not 0")
+                logger.warning(f"Failed to fetch Bilibili dynamic feed: code={data['code']}")
                 return None
             return  [ await formate_message("web",i) for i in  data["data"]["items"]]
-        except Exception as e:
-            logger.warning(f"get dynamic from follow list error {e}")
+        except Exception:
+            logger.exception("Failed to fetch Bilibili dynamic feed")
             return None
             
     async def get_dynamic_from_id(self,dyn_id:str) -> Optional[RenderMessage]:
@@ -114,7 +114,7 @@ class Dynamic(CookieManager):
         sign = Sign()
         await sign.getWbiKeys()
         if sign.img_key is None or sign.sub_key is None:
-            logger.warning("get img_key or sub_key error")
+            logger.warning(f"Failed to get Bilibili WBI keys for dynamic detail: dynamic_id={dyn_id}")
             return None
         self.headers.update({
             "referer":f"https://t.bilibili.com/{dyn_id}?spm_id_from=333.1365.list.card_time.click",
@@ -137,16 +137,16 @@ class Dynamic(CookieManager):
             response = sentry_http_get(url,headers=self.headers,params=signed_params,cookies=self.cookie)
             response.raise_for_status()
             return await formate_message("web",response.json()["data"]["item"])
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception(f"Failed to fetch Bilibili dynamic detail: dynamic_id={dyn_id}")
             return None
     
     async def get_short_link_location(self,short_link:str):
         try:
             response = sentry_http_get(short_link,headers=self.headers)
             return response.headers.get("Location",None)
-        except Exception as e:
-            logger.error(f"get short link location error:{e}")
+        except Exception:
+            logger.exception(f"Failed to resolve Bilibili short link: url={short_link}")
             return None
 
 
@@ -172,8 +172,8 @@ class Live(CookieManager):
             response = sentry_http_get(url,headers=self.headers,cookies=self.cookie,params=params)
             response.raise_for_status()
             return response.json()["data"]["live_users"]
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to fetch Bilibili live users from follow list")
             return None
 
     async def get_room_info_by_uids(self,uids:List[Union[int, str]]):
@@ -186,8 +186,8 @@ class Live(CookieManager):
             response.raise_for_status()
             result = response.json()["data"]
             return result if isinstance(result, dict) else None
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception(f"Failed to fetch Bilibili room info: uid_count={len(uids)}")
             return None
 
 class UserInfo(CookieManager):
@@ -246,8 +246,8 @@ class UserInfo(CookieManager):
             if response.json()["code"]==0:
                 return True
             return None
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception(f"Failed to change Bilibili follow status: uid={uid}, action={act}")
             return None
     
 
@@ -275,8 +275,8 @@ class Sign:
             sub_url: str = json_content['data']['wbi_img']['sub_url']
             self.img_key = img_url.rsplit('/', 1)[1].split('.')[0]
             self.sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to fetch Bilibili WBI keys")
         
     async def __getMixinKey(self, orig: str):
         '对 imgKey 和 subKey 进行字符顺序打乱编码'

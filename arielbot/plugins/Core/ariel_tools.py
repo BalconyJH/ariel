@@ -56,8 +56,8 @@ class LoginTools:
             cookies = {k: v[0] for k, v in params.items()}
             cookies.pop("gourl")
             return cookies
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to parse Bilibili login cookie")
             return None
 
 
@@ -183,7 +183,7 @@ class UpdateBotStatusTools:
             if not result:
                 return
             for i in result:
-                logger.info(f"关闭机器人：{i[0]}")
+                logger.info(f"Mark bot offline during shutdown: bot_id={i[0]}")
                 await m.update_bot_active_status((0, i[0]))
 
 

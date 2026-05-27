@@ -29,22 +29,31 @@ class PublicPusher:
 class DynPusher(PublicPusher):
     
     async def push_dynamic(self):
-        with sentry_span("ariel.push.dynamic", "push dynamic"):
+        with sentry_span("ariel.push.dynamic", "push dynamic") as span:
             follow_dynamic_list = await Dynamic().get_dynamic_from_follow_list()
             if follow_dynamic_list is None:
+                span.set_data("fetch.result", "empty")
                 return
+            span.set_data("dynamic.count", len(follow_dynamic_list))
             task_list = []
             async with DataManager() as m:
                 for dynamic in follow_dynamic_list:
                     result = await m.select_dyn_content(dynamic.message_id)
                     if result:
                         continue
-                    logger.info(f"检测到{dynamic.header.name}的新动态: {dynamic.message_id}")
+                    logger.info(
+                        f"Detected new dynamic: uid={dynamic.header.mid}, "
+                        f"dynamic_id={dynamic.message_id}, uname={dynamic.header.name}"
+                    )
                     all_push_group = await m.select_dynamic_push(dynamic.header.mid)
                     await m.insert_dyn_data((dynamic.message_id,dynamic.header.name,pickle.dumps(dynamic)))
                     if not all_push_group:
-                        logger.info("没有需要推送的群，跳过该动态")
+                        logger.debug(
+                            f"Skip dynamic push without subscribers: "
+                            f"uid={dynamic.header.mid}, dynamic_id={dynamic.message_id}"
+                        )
                         continue
+                    span.set_data("dynamic.push_target_count", len(all_push_group))
                     with sentry_span(
                         "ariel.render.dynamic",
                         "render dynamic image",
@@ -60,6 +69,7 @@ class DynPusher(PublicPusher):
                         f"传送门→https://t.bilibili.com/{dynamic.message_id}"
                     ) + UniMessage.image(raw=img_buffer.getvalue())
                     task_list.append({"target":all_push_group,"message":message})
+            span.set_data("push.task_count", len(task_list))
             if task_list:
                 await asyncio.gather(*[self.assign_tasks(i) for i in task_list])
     

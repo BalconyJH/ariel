@@ -31,7 +31,7 @@ JNrRuoEUXpabUzGB8QIDAQAB
         async with DataManager() as m:
             result  = await m.select_cookie()
         if result is None:
-            logger.info("未登录")
+            logger.debug("Bilibili cookie is not configured")
             return            
         self.refresh_token = result[1]
         self.cookie = pickle.loads(result[0])
@@ -69,8 +69,8 @@ JNrRuoEUXpabUzGB8QIDAQAB
             cipher = PKCS1_OAEP.new(self.key, SHA256)
             encrypted = cipher.encrypt(f'refresh_{response.json()["data"]["timestamp"]}'.encode())
             return binascii.b2a_hex(encrypted).decode()
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to prepare Bilibili cookie refresh path")
             return None
 
     async def __get_refresh_csrf(self,correspond_path):
@@ -80,9 +80,8 @@ JNrRuoEUXpabUzGB8QIDAQAB
             pattern = re.compile(r'<div\s+id\s*=\s*["\']1-name["\']\s*>(.*?)</div>',flags=re.DOTALL)
             match = pattern.search(respoese.text)
             return match.group(1).strip()
-        except Exception as e:
-            logger.error("get refresh_csrf error")
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to get Bilibili refresh csrf")
             return None
 
     async def __get_new_cookie(self,refresh_csrf):
@@ -106,9 +105,8 @@ JNrRuoEUXpabUzGB8QIDAQAB
                 new_cookie[i["name"]] = i["value"]
             new_cookie.update({"Expires":str (timestamp)})
             return (new_cookie,new_refresh_token)
-        except Exception as e:
-            logger.error("get new cookie error")
-            logger.error(e)
+        except Exception:
+            logger.exception("Failed to refresh Bilibili cookie")
             return None
 
     async def __parse_cookie_attributes(self,cookie_str: str) -> dict:
